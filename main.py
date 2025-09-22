@@ -12,7 +12,7 @@ init(autoreset=True)
 
 # ===== Tokenization & Vocab =====
 def tokenize(text):
-    return text.lower().strip().split()
+    return text.strip().split()
 
 class Vocab:
     def __init__(self):
@@ -202,5 +202,5 @@ if __name__ == "__main__":
             print(f"{Fore.GREEN}Goodbye!")
             break
 
-        response = generate_response(model, vocab, user_input, device=device, temperature=temperature)
+        response = generate_response(model, vocab, user_input.lower(), device=device, temperature=temperature)
         print(f"{Fore.RED}Bot: {Style.RESET_ALL}{response}")

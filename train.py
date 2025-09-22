@@ -26,8 +26,8 @@ def run_cli():
     print(f"{Fore.YELLOW}Type 'exit' at any prompt to quit.\n")
 
     while True:
-        prompt = input(f"{Fore.GREEN}Prompt: {Style.RESET_ALL}").strip()
-        if prompt.lower() in ["exit", "quit"]:
+        prompt = input(f"{Fore.GREEN}Prompt: {Style.RESET_ALL}").strip().lower()
+        if prompt in ["exit", "quit"]:
             print(f"{Fore.GREEN}Goodbye!")
             break
         answer = input(f"{Fore.BLUE}Answer: {Style.RESET_ALL}").strip()
