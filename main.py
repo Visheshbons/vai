@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import tiktoken  # pip install tiktoken
+import numpy as np
 
 # ======================================================
 # 1. Download pre-extracted Wikipedia text
@@ -25,25 +26,26 @@ else:
     print("Found existing data.txt")
 
 # ======================================================
-# 2. Load text
-# ======================================================
-with open(data_file, "r", encoding="utf-8") as f:
-    text = f.read()
-
-if len(text) < 1000:
-    raise RuntimeError("❌ data.txt is too small. Something went wrong.")
-
-# ======================================================
-# 3. Tokenize text using tiktoken
+# 2–3. Stream tokenization and save to disk
 # ======================================================
 enc = tiktoken.get_encoding("gpt2")
-tokens = enc.encode(text)
-vocab_size = enc.n_vocab
-print(f"Tokenized text: {len(tokens)} tokens | vocab size: {vocab_size}")
+token_file = "tokens.npy"
 
-data = torch.tensor(tokens, dtype=torch.long)
-n = int(0.9 * len(data))
-train_data, val_data = data[:n], data[n:]
+if not os.path.exists(token_file):
+    print("Encoding data.txt into tokens (streaming)...")
+    tokens = []
+    with open(data_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            tokens.extend(enc.encode(line + "\n"))
+            if len(tokens) % 10000 == 0:
+                print(f"Processed {len(tokens)} tokens")
+    np.save(token_file, np.array(tokens, dtype=np.int32))
+    print(f"Saved {len(tokens)} tokens to {token_file}")
+else:
+    print("Found existing token file")
 
 
 # ======================================================
