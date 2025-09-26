@@ -15,52 +15,91 @@ def memory_fraction():
     return mem.percent  # percentage of RAM used
 
 
+def memory_usage():
+    mem = psutil.virtual_memory()
+    return mem.used
+
+
+def simplifyNum(num, type="bytes"):
+    num = int(num)
+
+    if type == "bytes":
+        if num > 1000000000000000:
+            return f"{num / 1000000000000000:.2f}PB"
+        elif num > 1000000000000:
+            return f"{num / 1000000000000:.2f}TB"
+        elif num > 1000000000:
+            return f"{num / 1000000000:.2f}GB"
+        elif num > 1000000:
+            return f"{num / 1000000:.2f}MB"
+        elif num > 1000:
+            return f"{num / 1000:.2f}KB"
+        else:
+            return "A small number"
+
+    elif type == "number":
+        if num > 1000000000000000:
+            return f"{num / 1000000000000000:.2f} quadrillion"
+        elif num > 1000000000000:
+            return f"{num / 1000000000000:.2f} trillion"
+        elif num > 1000000000:
+            return f"{num / 1000000000:.2f} billion"
+        elif num > 1000000:
+            return f"{num / 1000000:.2f} million"
+        elif num > 1000:
+            return f"{num / 1000:.2f} thousand"
+        else:
+            return f"{num:.2f}"
+
+    else:
+        raise ValueError("Invalid type")
+
+
 # ======================================================
 # 1. Download pre-extracted Wikipedia text
 # ======================================================
 data_url = "https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-abstract.txt"
 data_file = "data.txt"
-
-#
-# Load token file lazily and set vocab / chunk parameters
-# ------------------------------------------------------
-tokens = np.load(token_file, mmap_mode="r")
-vocab_size = enc.n_vocab
-GPTConfig.vocab_size = vocab_size
-
-# tune block_size based on dataset length if you want it smaller
-# keep it reasonable; if dataset is tiny, reduce block_size accordingly
-data_len = len(tokens)
-GPTConfig.block_size = min(128, max(8, data_len // 100)) if data_len > 0 else 128
-print(f"Token dataset length: {data_len} tokens | vocab size: {vocab_size}")
-print(f"Using block_size = {GPTConfig.block_size}")
-
-# chunking parameters (adjust chunk_size to fit your RAM constraints)
-chunk_size = 10_000_000  # tokens per chunk (tweak smaller if still OOM)
-num_chunks = (data_len + chunk_size - 1) // chunk_size
-print(f"Will process dataset in {num_chunks} chunks (chunk_size={chunk_size})")
-
-# ======================================================
-# 2–3. Stream tokenization and save to disk
-# ======================================================
-enc = tiktoken.get_encoding("gpt2")
 token_file = "tokens.npy"
+enc = tiktoken.get_encoding("gpt2")
 
 if not os.path.exists(token_file):
     print("Encoding data.txt into tokens (streaming)...")
-    tokens = []
+    tokens_list = []
     with open(data_file, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            tokens.extend(enc.encode(line + "\n"))
-            if len(tokens) % 10000 == 0:
-                print(f"Processed {len(tokens)} tokens")
-    np.save(token_file, np.array(tokens, dtype=np.int32))
-    print(f"Saved {len(tokens)} tokens to {token_file}")
+            tokens_list.extend(enc.encode(line + "\n"))
+            if len(tokens_list) % 10000 == 0:
+                print(
+                    f"Processed {simplifyNum(len(tokens_list), 'number')} tokens (MEM: {
+                        simplifyNum(memory_usage(), 'bytes')
+                    } | {memory_fraction()}%)"
+                )
+            if memory_fraction() > 80:
+                print("[WARN]: Memory usage: 80%")
+                print("Exiting...")
+                exit(1)
+    np.save(token_file, np.array(tokens_list, dtype=np.int32))
+    print(f"Saved {len(tokens_list)} tokens to {token_file}")
 else:
     print("Found existing token file")
+
+# Now load tokens (memory-mapped) and configure GPT
+tokens = np.load(token_file, mmap_mode="r")
+vocab_size = enc.n_vocab
+GPTConfig.vocab_size = vocab_size
+
+data_len = len(tokens)
+GPTConfig.block_size = min(128, max(8, data_len // 100)) if data_len > 0 else 128
+print(f"Token dataset length: {data_len} tokens | vocab size: {vocab_size}")
+print(f"Using block_size = {GPTConfig.block_size}")
+
+chunk_size = 10_000_000  # tokens per chunk
+num_chunks = (data_len + chunk_size - 1) // chunk_size
+print(f"Will process dataset in {num_chunks} chunks (chunk_size={chunk_size})")
 
 
 # ======================================================
