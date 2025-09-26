@@ -1,18 +1,24 @@
 import os
 import json
 import time
-import requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import tiktoken  # pip install tiktoken
 import numpy as np
 import psutil
+from colorama import init, Fore, Style
+
+# init colorama
+init(autoreset=True)
 
 
+# ======================================================
+# Helpers
+# ======================================================
 def memory_fraction():
     mem = psutil.virtual_memory()
-    return mem.percent  # percentage of RAM used
+    return mem.percent
 
 
 def memory_usage():
@@ -24,47 +30,72 @@ def simplifyNum(num, type="bytes"):
     num = int(num)
 
     if type == "bytes":
-        if num > 1000000000000000:
-            return f"{num / 1000000000000000:.2f}PB"
-        elif num > 1000000000000:
-            return f"{num / 1000000000000:.2f}TB"
-        elif num > 1000000000:
-            return f"{num / 1000000000:.2f}GB"
-        elif num > 1000000:
-            return f"{num / 1000000:.2f}MB"
-        elif num > 1000:
-            return f"{num / 1000:.2f}KB"
+        if num > 1e15:
+            return f"{num / 1e15:.2f}PB"
+        elif num > 1e12:
+            return f"{num / 1e12:.2f}TB"
+        elif num > 1e9:
+            return f"{num / 1e9:.2f}GB"
+        elif num > 1e6:
+            return f"{num / 1e6:.2f}MB"
+        elif num > 1e3:
+            return f"{num / 1e3:.2f}KB"
         else:
-            return "A small number"
+            return f"{num}B"
 
     elif type == "number":
-        if num > 1000000000000000:
-            return f"{num / 1000000000000000:.2f} quadrillion"
-        elif num > 1000000000000:
-            return f"{num / 1000000000000:.2f} trillion"
-        elif num > 1000000000:
-            return f"{num / 1000000000:.2f} billion"
-        elif num > 1000000:
-            return f"{num / 1000000:.2f} million"
-        elif num > 1000:
-            return f"{num / 1000:.2f} thousand"
+        if num > 1e15:
+            return f"{num / 1e15:.2f} quadrillion"
+        elif num > 1e12:
+            return f"{num / 1e12:.2f} trillion"
+        elif num > 1e9:
+            return f"{num / 1e9:.2f} billion"
+        elif num > 1e6:
+            return f"{num / 1e6:.2f} million"
+        elif num > 1e3:
+            return f"{num / 1e3:.2f} thousand"
         else:
             return f"{num:.2f}"
-
     else:
         raise ValueError("Invalid type")
 
 
+# colored loggers
+def log_info(msg):
+    print(Fore.CYAN + msg + Style.RESET_ALL)
+
+
+def log_success(msg):
+    print(Fore.GREEN + msg + Style.RESET_ALL)
+
+
+def log_warn(msg):
+    print(Fore.YELLOW + msg + Style.RESET_ALL)
+
+
+def log_error(msg):
+    print(Fore.RED + msg + Style.RESET_ALL)
+
+
+def log_progress(msg):
+    print(Fore.WHITE + msg + Style.RESET_ALL)
+
+
+if psutil.virtual_memory().available < 10 * 1000 * 1000 * 1000:
+    log_warn("Less than 10GB of RAM available")
+    log_error("Exiting...")
+    exit(1)
+
+
 # ======================================================
-# 1. Download pre-extracted Wikipedia text
+# 1. Tokenization
 # ======================================================
-data_url = "https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-abstract.txt"
 data_file = "data.txt"
 token_file = "tokens.npy"
 enc = tiktoken.get_encoding("gpt2")
 
 if not os.path.exists(token_file):
-    print("Encoding data.txt into tokens (streaming)...")
+    log_info("Encoding data.txt into tokens (streaming)...")
     tokens_list = []
     with open(data_file, "r", encoding="utf-8") as f:
         for line in f:
@@ -73,53 +104,50 @@ if not os.path.exists(token_file):
                 continue
             tokens_list.extend(enc.encode(line + "\n"))
             if len(tokens_list) % 10000 == 0:
-                print(
-                    f"Processed {simplifyNum(len(tokens_list), 'number')} tokens (MEM: {
-                        simplifyNum(memory_usage(), 'bytes')
-                    } | {memory_fraction()}%)"
+                log_progress(
+                    f"Processed {simplifyNum(len(tokens_list), 'number')} tokens "
+                    f"({Fore.MAGENTA}{simplifyNum(memory_usage(), 'bytes')}{Style.RESET_ALL} | "
+                    f"{Fore.YELLOW}{memory_fraction():.1f}% RAM{Style.RESET_ALL})"
                 )
             if memory_fraction() > 80:
-                print("[WARN]: Memory usage: 80%")
-                print("Exiting...")
+                log_warn("Memory usage exceeded 80%")
+                log_error("Exiting...")
                 exit(1)
     np.save(token_file, np.array(tokens_list, dtype=np.int32))
-    print(f"Saved {len(tokens_list)} tokens to {token_file}")
+    log_success(f"Saved {len(tokens_list)} tokens to {token_file}")
 else:
-    print("Found existing token file")
+    log_success("Found existing token file")
 
-# Now load tokens (memory-mapped) and configure GPT
+
+# ======================================================
+# 2. Load tokens / GPT config
+# ======================================================
 tokens = np.load(token_file, mmap_mode="r")
 vocab_size = enc.n_vocab
-GPTConfig.vocab_size = vocab_size
-
-data_len = len(tokens)
-GPTConfig.block_size = min(128, max(8, data_len // 100)) if data_len > 0 else 128
-print(f"Token dataset length: {data_len} tokens | vocab size: {vocab_size}")
-print(f"Using block_size = {GPTConfig.block_size}")
-
-chunk_size = 10_000_000  # tokens per chunk
-num_chunks = (data_len + chunk_size - 1) // chunk_size
-print(f"Will process dataset in {num_chunks} chunks (chunk_size={chunk_size})")
 
 
-# ======================================================
-# 4. GPT config (set after tokens loaded)
-# ======================================================
 class GPTConfig:
-    # placeholders — real values set below after token file is loaded
-    vocab_size = None
+    vocab_size = vocab_size
     n_layer = 4
     n_head = 4
     n_embd = 128
-    block_size = 128  # default; overridden later if needed
+    block_size = min(128, max(8, len(tokens) // 100)) if len(tokens) > 0 else 128
 
 
-# Note: we will fill GPTConfig.vocab_size and GPTConfig.block_size
-# after we load the token file below.
+log_info(
+    f"Token dataset length: {Fore.MAGENTA}{len(tokens)}{Style.RESET_ALL} tokens | vocab size: {vocab_size}"
+)
+log_info(f"Using block_size = {Fore.BLUE}{GPTConfig.block_size}{Style.RESET_ALL}")
+
+chunk_size = 10_000_000
+num_chunks = (len(tokens) + chunk_size - 1) // chunk_size
+log_info(
+    f"Will process dataset in {Fore.BLUE}{num_chunks}{Style.RESET_ALL} chunks (chunk_size={chunk_size})"
+)
 
 
 # ======================================================
-# 5. GPT model
+# 3. GPT Model
 # ======================================================
 class GPT(nn.Module):
     def __init__(self, config):
@@ -168,14 +196,13 @@ class GPT(nn.Module):
 
 
 # ======================================================
-# 6. Training or Load Model
+# 4. Training or CLI
 # ======================================================
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model = GPT(GPTConfig).to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 
 loss_history = []
-
 model_file = "gpt_model.pt"
 meta_file = "training_metadata.json"
 
@@ -191,26 +218,25 @@ def get_batch(split, batch_size=32):
 
 
 if not os.path.exists(model_file):
-    # total training steps you want overall; you can scale this
     total_steps = 2000
     log_interval = 100
     steps_done = 0
     start_time = time.time()
 
-    print(f"Training new model for {total_steps} steps across {num_chunks} chunks...")
+    log_info(
+        f"Training new model for {Fore.BLUE}{total_steps}{Style.RESET_ALL} steps across {num_chunks} chunks..."
+    )
 
-    # how many steps per chunk (simple division — tweak if necessary)
     steps_per_chunk = max(1, total_steps // max(1, num_chunks))
 
     for chunk_idx in range(num_chunks):
         start = chunk_idx * chunk_size
         end = min(len(tokens), start + chunk_size)
-        # create torch tensor view of this chunk (does not allocate whole dataset)
         data_chunk = torch.from_numpy(tokens[start:end].astype(np.int64))
         n = int(0.9 * len(data_chunk))
         train_data, val_data = data_chunk[:n], data_chunk[n:]
 
-        print(
+        log_info(
             f"=== Chunk {chunk_idx + 1}/{num_chunks} | tokens {start}:{end} ({len(data_chunk)}) ==="
         )
 
@@ -223,7 +249,6 @@ if not os.path.exists(model_file):
             loss_history.append(loss.item())
             steps_done += 1
 
-            # Logging
             if steps_done % log_interval == 0 or steps_done == 1:
                 elapsed = time.time() - start_time
                 recent = loss_history[-log_interval:]
@@ -231,43 +256,40 @@ if not os.path.exists(model_file):
                 percent = 100 * steps_done / total_steps
                 steps_left = max(0, total_steps - steps_done)
                 est_time_left = (elapsed / max(1, steps_done)) * steps_left
+
                 msg = (
-                    f"[{steps_done}/{total_steps} | {percent:.1f}%] "
-                    f"Loss: {loss.item():.4f} (avg {avg_loss:.4f}) "
+                    f"[{steps_done}/{total_steps} | {Fore.BLUE}{percent:.1f}%{Style.RESET_ALL}] "
+                    f"Loss: {Fore.CYAN}{loss.item():.4f}{Style.RESET_ALL} "
+                    f"(avg {avg_loss:.4f}) "
                     f"Elapsed: {elapsed / 60:.1f}m ETA: {est_time_left / 60:.1f}m"
                 )
                 if device == "cuda":
                     mem = torch.cuda.memory_allocated() / (1024**2)
-                    msg += f" | GPU Mem: {mem:.1f} MB"
-                msg += f" | RAM%: {memory_fraction():.1f}%"
-                print(msg)
-
-            # Memory guard: if system RAM usage climbs above threshold, checkpoint & free
-            if memory_fraction() > 80.0:
-                print(
-                    "⚠️ Memory above 80% — checkpointing and clearing chunk to avoid OOM."
+                    msg += f" | GPU Mem: {Fore.MAGENTA}{mem:.1f} MB{Style.RESET_ALL}"
+                msg += (
+                    f" | RAM%: {Fore.YELLOW}{memory_fraction():.1f}%{Style.RESET_ALL}"
                 )
+                log_progress(msg)
+
+            if memory_fraction() > 80.0:
+                log_warn("⚠️ Memory above 80% — checkpointing...")
                 torch.save(
                     {"model": model.state_dict(), "optimizer": optimizer.state_dict()},
                     model_file,
                 )
-                # free chunk tensors & clear caches
                 try:
                     del train_data, val_data, data_chunk
                 except Exception:
                     pass
                 if device == "cuda":
                     torch.cuda.empty_cache()
-                # break out of steps for this chunk (will continue with next chunk)
                 break
 
-        # end per-chunk loop — save checkpoint after chunk completes or early exit
-        print(f"Saving checkpoint after chunk {chunk_idx + 1} ...")
+        log_info(f"Saving checkpoint after chunk {chunk_idx + 1} ...")
         torch.save(
             {"model": model.state_dict(), "optimizer": optimizer.state_dict()},
             model_file,
         )
-        # explicitly free the chunk if still present
         try:
             del train_data, val_data, data_chunk
         except Exception:
@@ -275,7 +297,6 @@ if not os.path.exists(model_file):
         if device == "cuda":
             torch.cuda.empty_cache()
 
-    # After all chunks, write metadata
     metadata = {
         "config": {
             "vocab_size": GPTConfig.vocab_size,
@@ -289,27 +310,26 @@ if not os.path.exists(model_file):
     }
     with open(meta_file, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, sort_keys=True)
-    print("Training complete. Final checkpoint and metadata saved.")
+    log_success("Training complete. Final checkpoint and metadata saved.")
 
 else:
-    print("Found existing model. Loading...")
+    log_success("Found existing model. Loading...")
     model.load_state_dict(torch.load(model_file, map_location=device))
     model.eval()
-    print("Model loaded. Entering CLI mode.")
+    log_success("Model loaded. Entering CLI mode.")
 
-    # CLI loop
     while True:
         try:
-            prompt = input("\nYou> ")
+            prompt = input(Fore.CYAN + "\nYou> " + Style.RESET_ALL)
             if not prompt.strip():
                 continue
             if prompt.lower() in {"quit", "exit"}:
-                print("Exiting CLI.")
+                log_info("Exiting CLI.")
                 break
             start = torch.tensor([enc.encode(prompt)], device=device)
             out = model.generate(start, max_new_tokens=100)
             decoded = enc.decode(out[0].tolist())
-            print("AI>", decoded)
+            print(Fore.GREEN + "AI> " + Style.RESET_ALL + decoded)
         except KeyboardInterrupt:
-            print("\nExiting CLI.")
+            log_info("\nExiting CLI.")
             break
