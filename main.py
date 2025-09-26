@@ -81,10 +81,44 @@ def log_progress(msg):
     print(Fore.WHITE + msg + Style.RESET_ALL)
 
 
+# =====================================================
+# Pre-start safety checks
+# =====================================================
+
+# Check if the system has at least 10GB of RAM available
 if psutil.virtual_memory().available < 10 * 1000 * 1000 * 1000:
     log_warn("Less than 10GB of RAM available")
     log_error("Exiting...")
     exit(1)
+
+# Check if the CPU has at least 10 cores
+if psutil.cpu_count(logical=False) < 10:
+    log_warn("Less than 10 CPU cores available")
+    choice = input("Are you sure you want to continue? (y/n): ")
+    if choice.lower() != "y":
+        log_error("Exiting...")
+        exit(1)
+    else:
+        cpuSufficient = False
+else:
+    cpuSufficient = True
+
+# Check for a GPU
+if not torch.cuda.is_available():
+    log_warn("No GPU available")
+    choice = input("Are you sure you want to run this on CPU only? (y/n): ")
+    if choice.lower() != "y":
+        log_error("Exiting...")
+        exit(1)
+    else:
+        gpuSufficient = False
+else:
+    gpuSufficient = True
+
+if not cpuSufficient:
+    log_warn("[WARN]: RUNNING WITH LESS THAN 10 CPU CORES")
+if not gpuSufficient:
+    log_warn("[WARN]: RUNNING WITHOUT GPU")
 
 
 # ======================================================
